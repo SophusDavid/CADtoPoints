@@ -74,6 +74,7 @@ class BaseTrainer(object):
             raise ValueError("Checkpoint {} not exists.".format(load_path))
 
         checkpoint = torch.load(load_path)
+        # print(checkpoint.keys())
         print("Loading checkpoint from {} ...".format(load_path))
         if isinstance(self.net, nn.DataParallel):
             self.net.module.load_state_dict(checkpoint['model_state_dict'])
@@ -91,7 +92,9 @@ class BaseTrainer(object):
 
     def update_network(self, loss_dict):
         """update network by back propagation"""
+        # print(loss_dict)
         loss = sum(loss_dict.values())
+        # loss=loss_dict
         self.optimizer.zero_grad()
         loss.backward()
         if self.cfg.grad_clip is not None:

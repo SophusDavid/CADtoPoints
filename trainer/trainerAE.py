@@ -1,13 +1,109 @@
 import torch
 import torch.optim as optim
 from tqdm import tqdm
-from model import CADTransformer
+from model import CADTransformer,GSCADTransformer
 from .base import BaseTrainer
-from .loss import CADLoss
+from .loss import CADLoss,GaussianLoss
 from .scheduler import GradualWarmupScheduler
 from cadlib.macro import *
+from submodules.chamfer_dist import ChamferDistanceL1,ChamferDistanceL2
+from pytorch3d.loss import chamfer_distance
+# from submodules.emd import earth_mover_distance
+# def Lossfunc(input,output):
+#     cd = chamfer_distance(input,output)
+#     emd = earth_mover_distance(input,output)
+#     emd = emd[0] / 2 + emd[1] * 2 + emd[2] / 3
+#     return {
+#         "chamfer_dist":cd,
+#         "EMD":emd
+#     }
+def LossFunc(input,output):
+    cd = chamfer_distance(input,output)
+    return {
+        'chamfer_dist':cd[0]
+    }
+class TrainerGSEncoder(BaseTrainer):
+    def build_net(self, cfg):
+        self.net = GSCADTransformer(cfg).cuda()
+        
+        
+    def set_optimizer(self, cfg):
+        """set optimizer and lr scheduler used in training"""
+        self.optimizer = optim.Adam(self.net.parameters(), cfg.lr)
+        self.scheduler = GradualWarmupScheduler(self.optimizer, 1.0, cfg.warmup_step)
+    def set_loss_function(self):
+        # TODO: implement loss function for gaussian 
+        # self.loss_func = GaussianLoss(self.cfg).cuda()
+        self.loss_func=LossFunc
+    def forward(self, data):
+        commands = data['command'].cuda() # (N, S)
+        args = data['args'].cuda()  # (N, S, N_ARGS)
+        points=data['points'].cuda()
+        outputs = self.net(commands, args)
+        loss_dict = self.loss_func(outputs,points)
 
+        return outputs, loss_dict
+    def encode(self, data, is_batch=False):
+        """encode into latent vectors"""
+        commands = data['command'].cuda()
+        args = data['args'].cuda()
+        if not is_batch:
+            commands = commands.unsqueeze(0)
+            args = args.unsqueeze(0)
+        z = self.net(commands, args, encode_mode=True)
+        return z
+    def decode(self, z):
+        """decode given latent vectors"""
+        outputs = self.net(None, None, z=z, return_tgt=False)
+        return outputs
 
+    def logits2vec(self, outputs, refill_pad=True, to_numpy=True):
+        """network outputs (logits) to final CAD vector"""
+        out_command = torch.argmax(torch.softmax(outputs['command_logits'], dim=-1), dim=-1)  # (N, S)
+        out_args = torch.argmax(torch.softmax(outputs['args_logits'], dim=-1), dim=-1) - 1  # (N, S, N_ARGS)
+        if refill_pad: # fill all unused element to -1
+            mask = ~torch.tensor(CMD_ARGS_MASK).bool().cuda()[out_command.long()]
+            out_args[mask] = -1
+
+        out_cad_vec = torch.cat([out_command.unsqueeze(-1), out_args], dim=-1)
+        if to_numpy:
+            out_cad_vec = out_cad_vec.detach().cpu().numpy()
+        return out_cad_vec
+
+    def evaluate(self, test_loader):
+        """evaluatinon during training"""
+        self.net.eval()
+        pbar = tqdm(test_loader)
+        pbar.set_description("EVALUATE[{}]".format(self.clock.epoch))
+        total_chamfer = 0.0
+        total_emd = 0.0
+        count = 0
+        for i, data in enumerate(pbar):
+            with torch.no_grad():
+                commands = data['command'].cuda()
+                args = data['args'].cuda()
+                outputs = self.net(commands, args)
+                
+
+            gt_commands = commands.squeeze(1).long().detach().cpu().numpy() # (N, S)
+            gt_args = args.squeeze(1).long().detach().cpu().numpy() # (N, S, n_args)
+            gt_points = data['points'].to('cuda')
+            cd_loss = chamfer_distance(outputs, gt_points)[0]
+            # emd_loss = earth_mover_distance(outputs, gt_points)
+            total_chamfer += cd_loss.item()
+            # total_emd += emd_loss.item()
+            count += 1
+            pbar.set_description(f"Evaluating (CD: {cd_loss.item():.4f})")
+
+        average_cd = total_chamfer / count
+        average_emd = total_emd / count
+
+        print(f'Average Chamfer Distance: {average_cd}')
+        # print(f'Average Earth Mover\'s Distance: {average_emd}')
+
+        self.val_tb.add_scalars("args_acc",
+                                {"Average Chamfer Dist": average_cd},
+                                global_step=self.clock.epoch)
 class TrainerAE(BaseTrainer):
     def build_net(self, cfg):
         self.net = CADTransformer(cfg).cuda()

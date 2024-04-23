@@ -77,7 +77,16 @@ class Encoder(nn.Module):
 
         z = (memory * padding_mask).sum(dim=0, keepdim=True) / padding_mask.sum(dim=0, keepdim=True) # (1, N, dim_z)
         return z
-
+    
+class GSHead(nn.Module):
+    def __init__(self,cfg) -> None:
+        super().__init__()
+        self.gslength=cfg.gslength
+        self.gsnum=cfg.gsnum
+        self.inputLength=cfg.d_model
+        self.gshead=nn.Linear(self.inputLength,self.gsnum*self.gslength).cuda()
+    def forward(self, z):
+        return self.gshead(z).view(-1,self.gsnum,self.gslength)
 
 class FCN(nn.Module):
     def __init__(self, d_model, n_commands, n_args, args_dim=256):
@@ -171,3 +180,29 @@ class CADTransformer(nn.Module):
             res["tgt_args"] = args_enc
 
         return res
+class GSCADTransformer(nn.Module):
+    def __init__(self, cfg):
+        super(GSCADTransformer, self).__init__()
+
+        self.CADTransformer=CADTransformer(cfg).cuda()
+        checkpoint = torch.load(cfg.cad_pretrained_model)
+        # 冻结预训练模型
+        if isinstance(self.CADTransformer, nn.DataParallel):
+            self.CADTransformer.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            self.CADTransformer.load_state_dict(checkpoint['model_state_dict'])
+        # self.CADTransformer.eval()
+        # self.CADTransformer.requires_grad_(False)
+        
+        # pretrained_model = torch.load(cfg.cad_pretrained_model)
+        # print("Loading  cad_pretrained_model checkpoint from {} ...".format(cfg.cad_pretrained_model))
+        # if isinstance(self.CADTransformer, nn.DataParallel):
+        #     self.CADTransformer.module.load_state_dict(pretrained_model['model_state_dict'])
+        # else:
+        #     self.CADTransformer.load_state_dict(pretrained_model['model_state_dict'])
+        self.GSHead=GSHead(cfg).cuda()
+
+    def forward(self, commands_enc, args_enc,
+                z=None, return_tgt=True, encode_mode=True):
+        z=self.CADTransformer(commands_enc, args_enc,z, return_tgt, encode_mode)
+        return self.GSHead(z)

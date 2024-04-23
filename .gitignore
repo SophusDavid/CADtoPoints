@@ -1,0 +1,8 @@
+
+*__pycache__*
+data/*
+experiments/*
+proj_log/*
+*build*
+submodules/*
+*.pth

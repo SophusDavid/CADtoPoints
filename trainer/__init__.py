@@ -1,2 +1,2 @@
-from .trainerAE import TrainerAE
+from .trainerAE import TrainerAE,TrainerGSEncoder
 from .trainerLGAN import TrainerLatentWGAN
