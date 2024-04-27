@@ -33,7 +33,7 @@ class GSCADDataset(Dataset):
         super(GSCADDataset, self).__init__()
         self.raw_data = os.path.join(config.data_root, "cad_vec") # h5 data root
         self.img_data = os.path.join(config.data_root, "cad_imgs") # images
-        self.mesh_data= os.path.join(config.data_root,"cad_mesh")
+        self.ply_data= os.path.join(config.data_root,"pc_cad")
         self.phase = phase
         self.aug = config.augment
         self.path = os.path.join(config.data_root, "train_val_test_split.json")
@@ -45,7 +45,9 @@ class GSCADDataset(Dataset):
         self.max_total_len = config.max_total_len
         self.gsnum=config.gsnum
         self.size = 256
-
+        self.transform=torch.transforms.Compose([
+            torch.transforms.RandomSamplePoints(self.gsnum)
+        ])
     def get_data_by_id(self, data_id):
         idx = self.all_data.index(data_id)
         return self.__getitem__(idx)
@@ -105,17 +107,14 @@ class GSCADDataset(Dataset):
         args = cad_vec[:, 1:]
         command = torch.tensor(command, dtype=torch.long)
         args = torch.tensor(args, dtype=torch.long)
-        mesh_path=os.path.join(self.mesh_data,data_id+".stl")
-        mesh_trimesh = trimesh.load(mesh_path)
+        ply_path=os.path.join(self.ply_data,data_id+".ply")
+        ply_files = trimesh.load(ply_path)
         # assert mesh_trimesh is not None
-        if mesh_trimesh.is_empty is None:
+        if ply_files.is_empty is None:
             print(data_id)
         try:
-            vertices = torch.tensor(mesh_trimesh.vertices, dtype=torch.float32)
-            faces = torch.tensor(mesh_trimesh.faces, dtype=torch.int64)
-            mesh_pytorch3d = Meshes(verts=[vertices], faces=[faces])
-            num_samples = self.gsnum
-            points = sample_points_from_meshes(mesh_pytorch3d, num_samples).squeeze(0)
+            points = torch.tensor(ply_files.vertices, dtype=torch.float32)
+            points=self.transform(points)
         except Exception:
             print(data_id)
         # 创建 PyTorch3D 的 Meshes 对象

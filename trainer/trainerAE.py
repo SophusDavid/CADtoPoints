@@ -8,6 +8,8 @@ from .scheduler import GradualWarmupScheduler
 from cadlib.macro import *
 from submodules.chamfer_dist import ChamferDistanceL1,ChamferDistanceL2
 from pytorch3d.loss import chamfer_distance
+from model import DVAE
+from collections import OrderedDict
 # from submodules.emd import earth_mover_distance
 # def Lossfunc(input,output):
 #     cd = chamfer_distance(input,output)
@@ -197,4 +199,77 @@ class TrainerAE(BaseTrainer):
         self.val_tb.add_scalars("args_acc",
                                 {"line": line_acc, "arc": arc_acc, "circle": circle_acc,
                                  "plane": sket_plane_acc, "trans": sket_trans_acc, "extent": extent_one_acc},
+                                global_step=self.clock.epoch)
+
+class TrainerDVAE(BaseTrainer):
+    def build_net(self, cfg):
+        self.net = DVAE(cfg.model).cuda()
+        
+        
+    def set_optimizer(self, cfg):
+        """set optimizer and lr scheduler used in training"""
+        self.optimizer = optim.Adam(self.net.parameters(), cfg.lr)
+        self.scheduler = GradualWarmupScheduler(self.optimizer, 1.0, cfg.warmup_step)
+    def set_loss_function(self):
+        # TODO: implement loss function for gaussian 
+        # self.loss_func = GaussianLoss(self.cfg).cuda()
+        self.loss_func=self.net.get_loss
+    def forward(self, data):
+        points=data['points'].cuda()
+        outputs = self.net(points)
+        loss_dict = self.loss_func(outputs,points)
+
+        return outputs, loss_dict
+    def encode(self, data, is_batch=False):
+        """encode into latent vectors"""
+        commands = data['command'].cuda()
+        args = data['args'].cuda()
+        if not is_batch:
+            commands = commands.unsqueeze(0)
+            args = args.unsqueeze(0)
+        z = self.net(commands, args, encode_mode=True)
+        return z
+    def decode(self, z):
+        """decode given latent vectors"""
+        outputs = self.net(None, None, z=z, return_tgt=False)
+        return outputs
+
+    def logits2vec(self, outputs, refill_pad=True, to_numpy=True):
+        """network outputs (logits) to final CAD vector"""
+        out_command = torch.argmax(torch.softmax(outputs['command_logits'], dim=-1), dim=-1)  # (N, S)
+        out_args = torch.argmax(torch.softmax(outputs['args_logits'], dim=-1), dim=-1) - 1  # (N, S, N_ARGS)
+        if refill_pad: # fill all unused element to -1
+            mask = ~torch.tensor(CMD_ARGS_MASK).bool().cuda()[out_command.long()]
+            out_args[mask] = -1
+
+        out_cad_vec = torch.cat([out_command.unsqueeze(-1), out_args], dim=-1)
+        if to_numpy:
+            out_cad_vec = out_cad_vec.detach().cpu().numpy()
+        return out_cad_vec
+
+    def evaluate(self, test_loader):
+        """evaluatinon during training"""
+        self.net.eval()
+        pbar = tqdm(test_loader)
+        pbar.set_description("EVALUATE[{}]".format(self.clock.epoch))
+        total_recon = 0.0
+        total_klv = 0.0
+        count = 0
+        for i, data in enumerate(pbar):
+            with torch.no_grad():
+                points=data['points'].cuda()
+                outputs = self.net(points)
+                loss_dict=self.net.get_loss(outputs,points)
+                total_recon+=loss_dict['loss_recon']
+                total_klv+=loss_dict['loss_klv']
+            pbar.set_postfix(OrderedDict({k: v.item() for k, v in loss_dict.items()}))
+
+        loss_recon_ave = total_recon / count
+        loss_klv_ave = total_klv / count
+
+        print(f'Average Recon Loss: {loss_recon_ave}')
+        print(f'Average KLV loss: {loss_klv_ave}')
+
+        self.val_tb.add_scalars("args_acc",
+                                {"Average Chamfer Dist": loss_recon_ave},
                                 global_step=self.clock.epoch)

@@ -12,7 +12,7 @@ def _make_seq_first(*args):
     return (*(arg.permute(1, 0, *range(2, arg.dim())) if arg is not None else None for arg in args),)
 
 
-def _make_batch_first(*args):
+def  _make_batch_first(*args):
     # S, N, ... -> N, S, ...
     if len(args) == 1:
         arg, = args
