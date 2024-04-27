@@ -30,7 +30,7 @@ class default_config:
         self.outputs = None
         self.z_path = None
 
-
+import easydict 
 class ConfigAE(object):
     def __init__(self, phase):
         self.is_train = phase == "train"
@@ -103,6 +103,14 @@ class ConfigAE(object):
             "loss_cmd_weight": 1.0,
             "loss_args_weight": 2.0
         }
+        self.model=easydict.EasyDict({
+                "group_size": 32, 
+    "num_group": 64, 
+    "encoder_dims": 256,
+    "num_tokens": 8192,
+    "tokens_dims": 256, 
+    "decoder_dims": 256, 
+        })
 
     def parse(self):
         """initiaize argument parser. Define default hyperparameters and collect from command-line arguments."""

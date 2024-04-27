@@ -84,9 +84,10 @@ class GSHead(nn.Module):
         self.gslength=cfg.gslength
         self.gsnum=cfg.gsnum
         self.inputLength=cfg.d_model
+        
         self.gshead=nn.Linear(self.inputLength,self.gsnum*self.gslength).cuda()
     def forward(self, z):
-        return self.gshead(z).view(-1,self.gsnum,self.gslength)
+        return self.gshead(-1,self.gsnum,self.gslength)
 
 class FCN(nn.Module):
     def __init__(self, d_model, n_commands, n_args, args_dim=256):
@@ -126,10 +127,9 @@ class Decoder(nn.Module):
         src = self.embedding(z)
         out = self.decoder(src, z, tgt_mask=None, tgt_key_padding_mask=None)
 
-        command_logits, args_logits = self.fcn(out)
+        output = self.fcn(out)
 
-        out_logits = (command_logits, args_logits)
-        return out_logits
+        return output
 
 
 class Bottleneck(nn.Module):
@@ -168,18 +168,18 @@ class CADTransformer(nn.Module):
         if encode_mode: return _make_batch_first(z)
 
         out_logits = self.decoder(z)
-        out_logits = _make_batch_first(*out_logits)
+        # out_logits = _make_batch_first(*out_logits)
 
-        res = {
-            "command_logits": out_logits[0],
-            "args_logits": out_logits[1]
-        }
+        # res = {
+        #     "command_logits": out_logits[0],
+        #     "args_logits": out_logits[1]
+        # }
 
-        if return_tgt:
-            res["tgt_commands"] = commands_enc
-            res["tgt_args"] = args_enc
+        # if return_tgt:
+        #     res["tgt_commands"] = commands_enc
+        #     res["tgt_args"] = args_enc
 
-        return res
+        return out_logits
 class GSCADTransformer(nn.Module):
     def __init__(self, cfg):
         super(GSCADTransformer, self).__init__()
@@ -200,9 +200,9 @@ class GSCADTransformer(nn.Module):
         #     self.CADTransformer.module.load_state_dict(pretrained_model['model_state_dict'])
         # else:
         #     self.CADTransformer.load_state_dict(pretrained_model['model_state_dict'])
-        self.GSHead=GSHead(cfg).cuda()
+        self.CADTransformer.decoder.fcn=GSHead(cfg).cuda()
 
     def forward(self, commands_enc, args_enc,
                 z=None, return_tgt=True, encode_mode=True):
         z=self.CADTransformer(commands_enc, args_enc,z, return_tgt, encode_mode)
-        return self.GSHead(z)
+        return z
