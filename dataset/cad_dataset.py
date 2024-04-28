@@ -12,6 +12,8 @@ from pytorch3d.vis.plotly_vis import plot_scene
 from pytorch3d.structures import Pointclouds
 from pytorch3d.structures import Meshes
 import trimesh
+# transforms
+from .data_transforms import RandomSamplePoints
 def get_dataloader(phase, config, shuffle=None):
     is_shuffle = phase == 'train' if shuffle is None else shuffle
 
@@ -45,9 +47,7 @@ class GSCADDataset(Dataset):
         self.max_total_len = config.max_total_len
         self.gsnum=config.gsnum
         self.size = 256
-        self.transform=torch.transforms.Compose([
-            torch.transforms.RandomSamplePoints(self.gsnum)
-        ])
+        self.transform=RandomSamplePoints(self.gsnum)
     def get_data_by_id(self, data_id):
         idx = self.all_data.index(data_id)
         return self.__getitem__(idx)
